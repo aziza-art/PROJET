@@ -1,73 +1,176 @@
-import { FeedbackData, FeedbackEntry, SubjectStats } from "../types";
+import { supabase } from '../supabaseClient';
+import { FeedbackData, FeedbackEntry, GlobalStats, EnvironmentStats } from "../types";
 
-const STORAGE_KEY = "isgi_evaluations_v3";
+const DEVICE_ID_KEY = "isgi_student_device_id";
 
-const generateId = () => Math.random().toString(36).substring(2, 11).toUpperCase();
+// Helper to get or create a persistent device ID
+const getDeviceId = (): string => {
+  let deviceId = localStorage.getItem(DEVICE_ID_KEY);
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  }
+  return deviceId;
+};
 
-export const saveFeedback = (data: FeedbackData): string => {
+// Initialize student - ensures exists in DB
+export const initStudent = async (): Promise<string> => {
+  const deviceId = getDeviceId();
+
+  // Check if student exists
+  const { data: existing } = await supabase
+    .from('students')
+    .select('id')
+    .eq('device_id', deviceId)
+    .single();
+
+  if (existing) {
+    return existing.id;
+  }
+
+  // Create new student
+  const { data: newStudent, error } = await supabase
+    .from('students')
+    .insert({ device_id: deviceId })
+    .select('id')
+    .single();
+
+  if (error || !newStudent) throw error || new Error('Failed to create student');
+  return newStudent.id;
+};
+
+// Get total unique students count
+export const getTotalStudents = async (): Promise<number> => {
+  const { count, error } = await supabase
+    .from('students')
+    .select('*', { count: 'exact', head: true });
+
+  if (error) return 0;
+  return count || 0;
+};
+
+export const saveFeedback = async (data: FeedbackData, studentId: string): Promise<string> => {
   try {
-    const history = getHistory();
-    const id = generateId();
-    const now = new Date();
-    const dateStr = now.toLocaleString('fr-FR', { 
-      year: 'numeric', month: '2-digit', day: '2-digit', 
-      hour: '2-digit', minute: '2-digit', second: '2-digit' 
-    });
-    
-    const newEntry: FeedbackEntry = { 
-      ...data, 
-      id: id, 
-      timestamp: dateStr 
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([newEntry, ...history]));
-    return id;
+    const { data: inserted, error } = await supabase
+      .from('feedbacks')
+      .insert({
+        student_id: studentId,
+        subject: data.subject,
+        q1: data.q1,
+        q2: data.q2,
+        q3: data.q3,
+        q4: data.q4,
+        q5: data.q5,
+        q6_jobs: data.q6_jobs,
+        q7_rooms: data.q7_rooms,
+        q8_resources: data.q8_resources,
+        q9_transport: data.q9_transport,
+        q10_laptop: data.q10_laptop,
+        comments: data.comments
+      })
+      .select('id')
+      .single();
+
+    if (error) throw error;
+    return inserted.id;
   } catch (e) {
-    console.error("Erreur lors de la sauvegarde locale", e);
-    return "ERROR";
+    console.error("Error saving feedback:", e);
+    throw e;
   }
 };
 
-export const getHistory = (): FeedbackEntry[] => {
-  try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch (e) {
+// Fetch history. If studentId is provided, returns specific student history.
+// If no studentId, implied Admin view (all history).
+export const getHistory = async (studentId?: string): Promise<FeedbackEntry[]> => {
+  let query = supabase.from('feedbacks').select('*').order('created_at', { ascending: false });
+
+  if (studentId) {
+    query = query.eq('student_id', studentId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Error fetching history:", error);
     return [];
   }
+
+  return data.map((item: any) => ({
+    ...item,
+    timestamp: new Date(item.created_at).toLocaleString('fr-FR'),
+  })) as FeedbackEntry[];
 };
 
-export const getSubjectStats = (subject: string): SubjectStats | null => {
-  const history = getHistory().filter(e => e.subject === subject);
-  if (history.length === 0) return null;
+export const getGlobalStats = async (): Promise<GlobalStats> => {
+  const history = await getHistory(); // Get all
+  const totalFeedbacks = history.length;
+  const subjects = new Set(history.map(e => e.subject));
+  const uniqueSubjects = subjects.size;
 
-  const numericKeys = ['q1', 'q2', 'q3', 'q4', 'q5', 'q7_rooms', 'q8_resources'];
-  const qAverages: Record<string, number> = {};
+  if (totalFeedbacks === 0) {
+    return { totalFeedbacks: 0, uniqueSubjects: 0, globalAverageScore: 0 };
+  }
 
-  numericKeys.forEach(key => {
-    const values = history
-      .map(e => e[key as keyof FeedbackEntry])
+  let totalScoreSum = 0;
+  let scoreCount = 0;
+
+  history.forEach(entry => {
+    const numericValues = [entry.q1, entry.q2, entry.q3, entry.q4, entry.q5]
       .filter((v): v is number => typeof v === 'number' && v !== null);
-    
-    if (values.length > 0) {
-      qAverages[key] = values.reduce((a, b) => a + b, 0) / values.length;
-    } else {
-      qAverages[key] = 0;
+
+    if (numericValues.length > 0) {
+      const entryAvg = numericValues.reduce((a, b) => a + b, 0) / numericValues.length;
+      totalScoreSum += entryAvg;
+      scoreCount++;
     }
   });
 
-  const pedagogyKeys = ['q1', 'q2', 'q3', 'q4', 'q5'];
-  const pedagogySum = pedagogyKeys.reduce((acc, k) => acc + (qAverages[k] || 0), 0);
-  const averageScore = pedagogySum / pedagogyKeys.length;
+  const globalAverageScore = scoreCount > 0 ? Math.round(totalScoreSum / scoreCount) : 0;
 
+  return { totalFeedbacks, uniqueSubjects, globalAverageScore };
+};
+
+export const getEnvironmentStats = async (): Promise<EnvironmentStats> => {
+  const history = (await getHistory()).filter(e => e.subject === 'ENVIRONNEMENT_GLOBAL');
+
+  const transportCounts: Record<string, number> = {};
+  let laptopYes = 0;
+  let laptopNo = 0;
+
+  history.forEach(e => {
+    if (e.q9_transport) {
+      transportCounts[e.q9_transport] = (transportCounts[e.q9_transport] || 0) + 1;
+    }
+    if (e.q10_laptop === 'Oui') laptopYes++;
+    if (e.q10_laptop === 'Non') laptopNo++;
+  });
+
+  const totalLaptop = laptopYes + laptopNo;
   return {
-    averageScore,
-    totalEntries: history.length,
-    qAverages
+    transport: transportCounts,
+    laptop: {
+      yes: laptopYes,
+      no: laptopNo,
+      rate: totalLaptop > 0 ? Math.round((laptopYes / totalLaptop) * 100) : 0
+    }
   };
 };
 
-export const downloadHistoryCSV = (data?: FeedbackEntry[]): void => {
-  const history = data || getHistory();
+export const getSubjectsBreakdown = async (): Promise<{ subject: string; count: number }[]> => {
+  const history = await getHistory();
+  const counts: Record<string, number> = {};
+
+  history.forEach(e => {
+    counts[e.subject] = (counts[e.subject] || 0) + 1;
+  });
+
+  return Object.entries(counts)
+    .map(([subject, count]) => ({ subject, count }))
+    .sort((a, b) => b.count - a.count);
+};
+
+export const downloadHistoryCSV = async (): Promise<void> => {
+  const history = await getHistory(); // All history
   if (history.length === 0) return;
 
   const headers = [
@@ -75,7 +178,7 @@ export const downloadHistoryCSV = (data?: FeedbackEntry[]): void => {
   ];
 
   const rows = history.map(e => [
-    e.id, e.timestamp, e.subject, e.q1, e.q2, e.q3, e.q4, e.q5, 
+    e.id, e.timestamp, e.subject, e.q1, e.q2, e.q3, e.q4, e.q5,
     e.q6_jobs, e.q7_rooms, e.q8_resources, e.q9_transport, e.q10_laptop,
     `"${(e.comments || "").replace(/"/g, '""')}"`
   ]);
@@ -86,26 +189,6 @@ export const downloadHistoryCSV = (data?: FeedbackEntry[]): void => {
   const link = document.createElement("a");
   link.setAttribute("href", url);
   link.setAttribute("download", `isgi_feedback_${new Date().getTime()}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
-export const downloadAggregatedStatsCSV = (subjectsList: string[]): void => {
-  const statsList = subjectsList
-    .map(s => ({ name: s, stats: getSubjectStats(s) }))
-    .filter((item): item is { name: string; stats: SubjectStats } => item.stats !== null);
-
-  if (statsList.length === 0) return;
-
-  const headers = ["Module", "Entries", "Average Score (%)"];
-  const rows = statsList.map(item => [item.name, item.stats.totalEntries, Math.round(item.stats.averageScore)]);
-  const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8-sig;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", "isgi_aggregated_stats.csv");
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
