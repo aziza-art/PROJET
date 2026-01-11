@@ -157,21 +157,8 @@ const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>('welcome');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
-  const [completedSubjects, setCompletedSubjects] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('isgi_completed_subjects');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
-  const [envAuditDone, setEnvAuditDone] = useState<boolean>(() => {
-    return localStorage.getItem('isgi_env_done') === 'true';
-  });
-
-  useEffect(() => {
-    localStorage.setItem('isgi_completed_subjects', JSON.stringify(completedSubjects));
-    localStorage.setItem('isgi_env_done', envAuditDone.toString());
-  }, [completedSubjects, envAuditDone]);
-
+  const [completedSubjects, setCompletedSubjects] = useState<string[]>([]);
+  const [envAuditDone, setEnvAuditDone] = useState(false);
   const [lastSubmissionId, setLastSubmissionId] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -201,58 +188,41 @@ const App: React.FC = () => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify(formData));
   }, [formData]);
 
-  const setup = async () => {
-    try {
-      const id = await initStudent();
-      setStudentId(id);
-    } catch (err) {
-      console.error("Failed to initialize student:", err);
-    }
-  };
-
   useEffect(() => {
+    const setup = async () => {
+      try {
+        const id = await initStudent();
+        setStudentId(id);
+      } catch (err) {
+        console.error("Failed to initialize student:", err);
+      }
+    };
     setup();
   }, []);
 
   const refreshStats = async () => {
     try {
-      // Priorité à l'ID étudiant pour l'historique personnel
-      if (!studentId && !sidebarOpen) return;
-
       const [gs, es, sb, history] = await Promise.all([
         getGlobalStats(),
         getEnvironmentStats(),
         getSubjectsBreakdown(),
-        studentId ? getHistory(studentId) : Promise.resolve([])
+        getHistory()
       ]);
 
       setGlobalStats(gs);
       setEnvStats(es);
       setSubjectsBreakdown(sb);
-
       const feedbackHistory = history as any[];
-      const serverCompleted = feedbackHistory
-        .filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL')
-        .map(e => e.subject);
-
-      const isEnvDoneServer = feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL');
-
-      // Fusion intelligente : on garde ce qu'on a en local + ce que le serveur confirme
-      setCompletedSubjects(prev => {
-        const combined = Array.from(new Set([...prev, ...serverCompleted]));
-        return combined;
-      });
-      setEnvAuditDone(prev => prev || isEnvDoneServer);
+      setCompletedSubjects(feedbackHistory.filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL').map(e => e.subject));
+      setEnvAuditDone(feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL'));
     } catch (err) {
       console.error("Error refreshing stats:", err);
     }
   };
 
   useEffect(() => {
-    if (studentId || sidebarOpen) {
-      refreshStats();
-    }
-  }, [studentId, sidebarOpen, step]);
+    refreshStats();
+  }, [step, sidebarOpen]);
 
   const progressStats = useMemo(() => {
     const isEnv = formData.subject === 'ENVIRONNEMENT_GLOBAL';
@@ -270,7 +240,6 @@ const App: React.FC = () => {
   };
 
   const startPedagogy = (subject: string) => {
-    if (completedSubjects.includes(subject)) return;
     if (formData.subject !== subject) {
       setFormData({ ...initialFormData, subject });
     }
@@ -280,7 +249,6 @@ const App: React.FC = () => {
   };
 
   const startEnvAudit = () => {
-    if (envAuditDone) return;
     if (formData.subject !== 'ENVIRONNEMENT_GLOBAL') {
       setFormData({ ...initialFormData, subject: 'ENVIRONNEMENT_GLOBAL' });
     }
@@ -291,67 +259,68 @@ const App: React.FC = () => {
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validation progression
     if (progressStats.completed < 5) {
       setShowValidationErrors(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    const backupStep = step;
-    setStep('submitting');
-
-    // 1. Récupération ID de secours (Auto-réparation)
-    let activeId = studentId;
-    if (!activeId) {
-      try {
-        console.log("Student ID missing, attempting emergency init...");
-        activeId = await initStudent();
-        setStudentId(activeId);
-      } catch (initErr) {
-        console.error("Emergency init failed:", initErr);
-        alert("Impossible d'initialiser votre session. Vérifiez votre connexion.");
-        setStep(backupStep);
-        return;
-      }
+    // Validation doublons (sécurité supplémentaire)
+    if (formData.subject === 'ENVIRONNEMENT_GLOBAL' && envAuditDone) {
+      alert("Vous avez déjà soumis cet audit.");
+      setStep('hub');
+      return;
+    }
+    if (formData.subject !== 'ENVIRONNEMENT_GLOBAL' && completedSubjects.includes(formData.subject)) {
+      alert("Module déjà évalué.");
+      setStep('hub');
+      return;
     }
 
-    try {
-      // 2. Sauvegarde des données (Le coeur de l'opération)
-      const submissionId = await saveFeedback(formData, activeId);
-      setLastSubmissionId(submissionId);
+    setStep('submitting');
 
-      // 3. Mise à jour de l'état local
-      if (formData.subject === 'ENVIRONNEMENT_GLOBAL') {
-        setEnvAuditDone(true);
-      } else {
-        setCompletedSubjects(prev => Array.from(new Set([...prev, formData.subject])));
+    try {
+      // 1. Récupération robuste de l'ID étudiant
+      let currentId = studentId;
+      if (!currentId) {
+        console.log("ID manquant, tentative de récupération...");
+        currentId = await initStudent();
+        setStudentId(currentId);
       }
 
-      // 4. Isolation de l'IA (Try/Catch Silencieux)
-      // On ne bloque pas l'utilisateur si la clé API Gemini est invalide
+      if (!currentId) throw new Error("Impossible de générer un identifiant étudiant.");
+
+      // 2. Sauvegarde sur Supabase (étape critique)
+      const id = await saveFeedback(formData, currentId);
+      setLastSubmissionId(id);
+
+      // 3. Analyse IA et Email (non bloquant)
       try {
         const analysis = await analyzeFeedback(formData);
         await sendAnalysisToAdmin(formData, analysis);
-      } catch (aiErr: any) {
-        console.warn("AI Analysis or Email failed, but continuing:", aiErr.message);
+      } catch (err) {
+        console.warn("Erreur non bloquante (IA/Email):", err);
+        // On ne bloque pas l'utilisateur si l'IA ou l'email échoue
       }
 
-      // 5. Opérations de nettoyage et finalisation (Toujours exécutées après sauvegarde)
+      // 4. Nettoyage et transition
       localStorage.removeItem(DRAFT_KEY);
       setFormData(initialFormData);
-
       await refreshStats();
-      setStep('thanks');
 
-    } catch (err: any) {
-      console.error("Critical submission error:", err);
-      alert(err.message || "Échec de l'envoi. Veuillez réessayer plus tard.");
-      setStep(backupStep);
+      setStep('thanks');
+    } catch (error) {
+      console.error("Erreur critique soumission:", error);
+      // Même en cas d'erreur critique, on essaie de ne pas bloquer l'utilisateur sur le spinner
+      alert("Une erreur est survenue lors de la sauvegarde. Veuillez réessayer.");
+      setStep('hub');
     }
   };
 
   // --- Calculs pour l'affichage (Barres de progression) ---
-  const totalStepsCount = GI_SUBJECTS.length + 1; // 11 Modules + 1 Audit = 12
+  const totalStepsCount = GI_SUBJECTS.length + 1; // Modules + Environnement
   const currentProgressCount = completedSubjects.length + (envAuditDone ? 1 : 0);
   const globalProgression = Math.round((currentProgressCount / totalStepsCount) * 100);
   const firstUncompleted = GI_SUBJECTS.find(s => !completedSubjects.includes(s));
@@ -360,10 +329,7 @@ const App: React.FC = () => {
     <div className="min-h-screen text-slate-100 pb-20 selection:bg-indigo-500/30">
       {step === 'scanner' && (
         <QRScanner
-          onScan={(d) => {
-            const s = GI_SUBJECTS.find(x => d.includes(x));
-            if (s && !completedSubjects.includes(s)) startPedagogy(s);
-          }}
+          onScan={(d) => { const s = GI_SUBJECTS.find(x => d.includes(x)); if (s) startPedagogy(s); }}
           onClose={() => setStep('hub')}
         />
       )}
@@ -410,6 +376,7 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-8 animate-in slide-in-from-right duration-500">
+              {/* Header Auth */}
               <div className="flex items-center gap-4 bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl">
                 <div className="p-2 bg-emerald-500 rounded-lg">
                   <ShieldCheck className="w-6 h-6 text-white" />
@@ -420,6 +387,7 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* KPI Cards */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
                   <p className="text-3xl font-black text-white">{globalStats.totalFeedbacks}</p>
@@ -431,10 +399,13 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* Stats Environnement */}
               <div className="space-y-4">
                 <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
                   <BarChart3 className="w-3 h-3" /> Focus Environnement
                 </h5>
+
+                {/* PC Rate */}
                 <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 relative overflow-hidden">
                   <div className="flex justify-between items-end relative z-10">
                     <div>
@@ -446,6 +417,7 @@ const App: React.FC = () => {
                   <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000" style={{ width: `${envStats.laptop.rate}%` }}></div>
                 </div>
 
+                {/* Transport Distribution */}
                 <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-4">
                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-2">Mobilité Étudiante</p>
                   <div className="space-y-3">
@@ -463,6 +435,7 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* Breakdown Subjects */}
               <div className="space-y-4">
                 <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
                   <PieChart className="w-3 h-3" /> Détail Modules
@@ -518,6 +491,7 @@ const App: React.FC = () => {
 
         {step === 'hub' && (
           <div className="space-y-10 animate-in slide-in-from-bottom-6 duration-500">
+            {/* Bannière de Progression Globale */}
             <div className="bg-slate-900/60 border-2 border-slate-800 rounded-[48px] p-8 md:p-10 shadow-2xl relative overflow-hidden">
               <div className="absolute -right-10 -top-10 opacity-10 pointer-events-none">
                 <TrendingUp size={240} className="text-indigo-400" />
@@ -528,7 +502,7 @@ const App: React.FC = () => {
                   <h2 className="text-5xl md:text-7xl font-black text-white italic tracking-tighter uppercase leading-none">
                     {currentProgressCount} <span className="text-slate-700">/ {totalStepsCount}</span>
                   </h2>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{Math.max(0, totalStepsCount - currentProgressCount)} étapes restantes</p>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{totalStepsCount - currentProgressCount} étapes restantes</p>
                 </div>
                 <div className="flex-1 max-w-sm w-full space-y-4">
                   <div className="flex justify-between items-end px-1">
@@ -548,64 +522,42 @@ const App: React.FC = () => {
               <h2 className="text-3xl font-black uppercase italic leading-none flex items-center gap-3">
                 <LayoutDashboard className="w-6 h-6 text-indigo-400" /> Console Étudiant
               </h2>
-              <button
-                onClick={() => setStep('scanner')}
-                className="p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-2xl text-indigo-400 hover:bg-indigo-500 hover:text-white transition-all"
-              >
-                <QrCode className="w-6 h-6" />
-              </button>
+              <button onClick={() => setStep('scanner')} className="p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-2xl text-indigo-400 hover:bg-indigo-500 hover:text-white transition-all"><QrCode className="w-6 h-6" /></button>
             </div>
 
+            {/* Grille des modules académiques */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {GI_SUBJECTS.map((s) => {
                 const status = getSubjectStatus(s);
                 const isDone = status === 'Terminé';
                 const isProgress = status === 'En cours';
                 return (
-                  <button
-                    key={s}
-                    disabled={isDone}
-                    onClick={() => startPedagogy(s)}
-                    className={`p-5 rounded-3xl border transition-all text-left group flex flex-col gap-3 h-full ${isDone ? 'bg-emerald-500/5 border-emerald-500/30 opacity-60 grayscale-[0.5] cursor-not-allowed' :
-                      isProgress ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/20' :
-                        'bg-slate-950/40 border-slate-800 hover:border-slate-600'
-                      }`}
-                  >
+                  <button key={s} onClick={() => !isDone && startPedagogy(s)} className={`p-5 rounded-3xl border transition-all text-left group flex flex-col gap-3 h-full ${isDone ? 'bg-emerald-500/5 border-emerald-500/30' :
+                    isProgress ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/20' :
+                      'bg-slate-950/40 border-slate-800 hover:border-slate-600'
+                    }`}>
                     <div className="flex items-center justify-between">
                       {isDone ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : isProgress ? <Clock className="w-4 h-4 text-indigo-400 animate-pulse" /> : <Circle className="w-4 h-4 text-slate-700" />}
-                      <span className={`text-[8px] font-black uppercase tracking-tighter ${isDone ? 'text-emerald-400' : isProgress ? 'text-indigo-400' : 'text-slate-600'}`}>
-                        {status}
-                      </span>
+                      <span className={`text-[8px] font-black uppercase tracking-tighter ${isDone ? 'text-emerald-400' : isProgress ? 'text-indigo-400' : 'text-slate-600'}`}>{status}</span>
                     </div>
-                    <p className={`text-[10px] font-black uppercase leading-tight line-clamp-2 ${isDone ? 'text-emerald-100' : isProgress ? 'text-indigo-100' : 'text-slate-400 group-hover:text-white'}`}>
-                      {s}
-                    </p>
+                    <p className={`text-[10px] font-black uppercase leading-tight line-clamp-2 ${isDone ? 'text-emerald-100' : isProgress ? 'text-indigo-100' : 'text-slate-400 group-hover:text-white'}`}>{s}</p>
                   </button>
                 );
               })}
             </div>
 
+            {/* Audit Environnemental & Actions Globales */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pb-12">
-              <button
-                disabled={envAuditDone}
-                onClick={startEnvAudit}
-                className={`p-10 rounded-[40px] border-2 transition-all text-left group flex flex-col justify-between h-64 ${envAuditDone ? 'bg-emerald-500/5 border-emerald-500/30 opacity-60 cursor-not-allowed' : 'bg-slate-900/40 border-slate-800 hover:border-emerald-500/50'
-                  }`}
-              >
+              <button onClick={startEnvAudit} className={`p-10 rounded-[40px] border-2 transition-all text-left group flex flex-col justify-between h-64 ${envAuditDone ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-slate-900/40 border-slate-800 hover:border-emerald-500/50'}`}>
                 <Building2 className={`w-12 h-12 transition-transform group-hover:scale-110 ${envAuditDone ? 'text-emerald-400' : 'text-slate-600'}`} />
                 <div>
                   <h3 className="text-2xl font-black uppercase text-white">Environnement</h3>
-                  <p className={`text-[10px] font-black uppercase tracking-[0.3em] mt-2 ${envAuditDone ? 'text-emerald-400' : 'text-slate-500'}`}>
-                    {envAuditDone ? 'Audit Clôturé' : 'Audit Infrastructure & Logistique'}
-                  </p>
+                  <p className={`text-[10px] font-black uppercase tracking-[0.3em] mt-2 ${envAuditDone ? 'text-emerald-400' : 'text-slate-500'}`}>{envAuditDone ? 'Audit Clôturé' : 'Audit Infrastructure & Logistique'}</p>
                 </div>
               </button>
 
               {firstUncompleted && (
-                <button
-                  onClick={() => startPedagogy(firstUncompleted)}
-                  className="p-10 rounded-[40px] bg-indigo-600 border-2 border-indigo-500 hover:bg-indigo-500 transition-all text-left group flex flex-col justify-between h-64 shadow-2xl"
-                >
+                <button onClick={() => startPedagogy(firstUncompleted)} className="p-10 rounded-[40px] bg-indigo-600 border-2 border-indigo-500 hover:bg-indigo-500 transition-all text-left group flex flex-col justify-between h-64 shadow-2xl">
                   <Zap className="text-white w-12 h-12 group-hover:rotate-12 transition-transform" />
                   <div>
                     <h3 className="text-2xl font-black text-white uppercase leading-none">Prochaine Étape</h3>
