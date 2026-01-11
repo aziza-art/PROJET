@@ -300,13 +300,17 @@ const App: React.FC = () => {
     const backupStep = step;
     setStep('submitting');
 
+    let activeId = studentId;
+
     try {
-      if (!studentId) {
-        throw new Error("Identifiant étudiant introuvable. Veuillez rafraîchir la page.");
+      if (!activeId) {
+        // Tentative de récupération "auto-réparatrice"
+        activeId = await initStudent();
+        setStudentId(activeId);
       }
 
       // Sauvegarde effective
-      const submissionId = await saveFeedback(formData, studentId);
+      const submissionId = await saveFeedback(formData, activeId);
       setLastSubmissionId(submissionId);
 
       // MISE À JOUR DE L'ÉTAT (Confirmée par le serveur)
