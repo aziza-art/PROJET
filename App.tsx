@@ -300,42 +300,52 @@ const App: React.FC = () => {
     const backupStep = step;
     setStep('submitting');
 
+    // 1. Récupération ID de secours (Auto-réparation)
     let activeId = studentId;
-
-    try {
-      if (!activeId) {
-        // Tentative de récupération "auto-réparatrice"
+    if (!activeId) {
+      try {
+        console.log("Student ID missing, attempting emergency init...");
         activeId = await initStudent();
         setStudentId(activeId);
+      } catch (initErr) {
+        console.error("Emergency init failed:", initErr);
+        alert("Impossible d'initialiser votre session. Vérifiez votre connexion.");
+        setStep(backupStep);
+        return;
       }
+    }
 
-      // Sauvegarde effective
+    try {
+      // 2. Sauvegarde des données (Le coeur de l'opération)
       const submissionId = await saveFeedback(formData, activeId);
       setLastSubmissionId(submissionId);
 
-      // MISE À JOUR DE L'ÉTAT (Confirmée par le serveur)
+      // 3. Mise à jour de l'état local
       if (formData.subject === 'ENVIRONNEMENT_GLOBAL') {
         setEnvAuditDone(true);
       } else {
-        const newCompleted = Array.from(new Set([...completedSubjects, formData.subject]));
-        setCompletedSubjects(newCompleted);
+        setCompletedSubjects(prev => Array.from(new Set([...prev, formData.subject])));
       }
 
-      // Analyse IA et Email en arrière-plan
-      analyzeFeedback(formData)
-        .then(analysis => sendAnalysisToAdmin(formData, analysis))
-        .catch(err => console.error("AI/Email background error:", err));
+      // 4. Isolation de l'IA (Try/Catch Silencieux)
+      // On ne bloque pas l'utilisateur si la clé API Gemini est invalide
+      try {
+        const analysis = await analyzeFeedback(formData);
+        await sendAnalysisToAdmin(formData, analysis);
+      } catch (aiErr: any) {
+        console.warn("AI Analysis or Email failed, but continuing:", aiErr.message);
+      }
 
+      // 5. Opérations de nettoyage et finalisation (Toujours exécutées après sauvegarde)
       localStorage.removeItem(DRAFT_KEY);
       setFormData(initialFormData);
 
-      // Rafraîchir les stats globales pour l'admin
       await refreshStats();
-
       setStep('thanks');
+
     } catch (err: any) {
-      console.error("Submission failed:", err);
-      alert(err.message || "Échec de l'envoi. Vérifiez votre connexion internet.");
+      console.error("Critical submission error:", err);
+      alert(err.message || "Échec de l'envoi. Veuillez réessayer plus tard.");
       setStep(backupStep);
     }
   };
