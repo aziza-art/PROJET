@@ -10,6 +10,7 @@ import {
   getSubjectsBreakdown,
   downloadHistoryCSV
 } from './services/storageService';
+import { isSupabaseConfigured } from './supabaseClient';
 import { analyzeFeedback } from './services/geminiService';
 import { sendAnalysisToAdmin } from './services/emailService';
 import jsQR from 'jsqr';
@@ -124,6 +125,35 @@ const QRScanner: React.FC<{ onScan: (data: string) => void; onClose: () => void 
 };
 
 const App: React.FC = () => {
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full space-y-8 animate-in fade-in zoom-in duration-700">
+          <div className="relative inline-block">
+            <ShieldAlert className="w-24 h-24 text-amber-500 mx-auto relative z-10" />
+            <div className="absolute inset-0 bg-amber-500/20 blur-3xl rounded-full animate-pulse"></div>
+          </div>
+          <div className="space-y-4">
+            <h2 className="text-3xl font-black uppercase italic tracking-tighter text-white">Configuration Requise</h2>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              L'application ISGI Qualité nécessite les variables d'environnement Supabase pour fonctionner.
+            </p>
+          </div>
+          <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-6 text-left space-y-4 font-mono text-[10px]">
+            <p className="text-indigo-400 font-bold uppercase tracking-widest">Étapes à suivre sur Vercel :</p>
+            <ol className="list-decimal list-inside space-y-2 text-slate-500">
+              <li>Allez dans <span className="text-white">Settings &gt; Environment Variables</span></li>
+              <li>Ajoutez <span className="text-white">VITE_SUPABASE_URL</span></li>
+              <li>Ajoutez <span className="text-white">VITE_SUPABASE_ANON_KEY</span></li>
+              <li>Redéployez l'application</li>
+            </ol>
+          </div>
+          <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">ISGI • Système d'Audit Qualité</p>
+        </div>
+      </div>
+    );
+  }
+
   const [step, setStep] = useState<AppStep>('welcome');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
