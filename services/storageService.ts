@@ -15,28 +15,43 @@ const getDeviceId = (): string => {
 
 // Initialize student - ensures exists in DB
 export const initStudent = async (): Promise<string> => {
-  const deviceId = getDeviceId();
+  try {
+    const deviceId = getDeviceId();
 
-  // Check if student exists
-  const { data: existing } = await supabase
-    .from('students')
-    .select('id')
-    .eq('device_id', deviceId)
-    .single();
+    // Check if student exists
+    const { data: existing, error: selectError } = await supabase
+      .from('students')
+      .select('id')
+      .eq('device_id', deviceId)
+      .maybeSingle();
 
-  if (existing) {
-    return existing.id;
+    if (selectError && selectError.code !== 'PGRST116') {
+      console.error("Supabase select error:", selectError);
+      throw selectError;
+    }
+
+    if (existing) {
+      return existing.id;
+    }
+
+    // Create new student
+    const { data: newStudent, error: insertError } = await supabase
+      .from('students')
+      .insert({ device_id: deviceId })
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error("Supabase insert error:", insertError);
+      throw insertError;
+    }
+
+    if (!newStudent) throw new Error('Failed to create student record');
+    return newStudent.id;
+  } catch (err) {
+    console.error("Critical error in initStudent:", err);
+    throw err;
   }
-
-  // Create new student
-  const { data: newStudent, error } = await supabase
-    .from('students')
-    .insert({ device_id: deviceId })
-    .select('id')
-    .single();
-
-  if (error || !newStudent) throw error || new Error('Failed to create student');
-  return newStudent.id;
 };
 
 // Get total unique students count

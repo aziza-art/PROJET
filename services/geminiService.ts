@@ -3,7 +3,9 @@ import { FeedbackData, AnalysisResult } from "../types";
 
 export const analyzeFeedback = async (data: FeedbackData): Promise<AnalysisResult> => {
   // Initialisation conforme aux dernières recommandations de sécurité
-  const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY || "" });
+  const ai = new GoogleGenAI({
+    apiKey: import.meta.env.VITE_API_KEY || import.meta.env.GEMINI_API_KEY || ""
+  });
 
   const isEnv = data.subject === 'ENVIRONNEMENT_GLOBAL';
 
