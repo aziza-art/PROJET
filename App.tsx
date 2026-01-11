@@ -157,8 +157,21 @@ const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>('welcome');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
-  const [completedSubjects, setCompletedSubjects] = useState<string[]>([]);
-  const [envAuditDone, setEnvAuditDone] = useState(false);
+  const [completedSubjects, setCompletedSubjects] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('isgi_completed_subjects');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [envAuditDone, setEnvAuditDone] = useState<boolean>(() => {
+    return localStorage.getItem('isgi_env_done') === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('isgi_completed_subjects', JSON.stringify(completedSubjects));
+    localStorage.setItem('isgi_env_done', envAuditDone.toString());
+  }, [completedSubjects, envAuditDone]);
+
   const [lastSubmissionId, setLastSubmissionId] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -188,15 +201,16 @@ const App: React.FC = () => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify(formData));
   }, [formData]);
 
+  const setup = async () => {
+    try {
+      const id = await initStudent();
+      setStudentId(id);
+    } catch (err) {
+      console.error("Failed to initialize student:", err);
+    }
+  };
+
   useEffect(() => {
-    const setup = async () => {
-      try {
-        const id = await initStudent();
-        setStudentId(id);
-      } catch (err) {
-        console.error("Failed to initialize student:", err);
-      }
-    };
     setup();
   }, []);
 
@@ -220,11 +234,11 @@ const App: React.FC = () => {
         .filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL')
         .map(e => e.subject);
 
-      const isEnvDone = feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL');
+      const isEnvDoneServer = feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL');
 
       // Fusionner avec l'état local actuel pour éviter les régressions visuelles
       setCompletedSubjects(prev => Array.from(new Set([...prev, ...serverCompleted])));
-      setEnvAuditDone(prev => prev || isEnvDone);
+      setEnvAuditDone(prev => prev || isEnvDoneServer);
     } catch (err) {
       console.error("Error refreshing stats:", err);
     }
