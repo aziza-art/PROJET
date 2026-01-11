@@ -206,12 +206,13 @@ const App: React.FC = () => {
         getGlobalStats(),
         getEnvironmentStats(),
         getSubjectsBreakdown(),
-        getHistory()
+        studentId ? getHistory(studentId) : Promise.resolve([])
       ]);
 
       setGlobalStats(gs);
       setEnvStats(es);
       setSubjectsBreakdown(sb);
+
       const feedbackHistory = history as any[];
       setCompletedSubjects(feedbackHistory.filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL').map(e => e.subject));
       setEnvAuditDone(feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL'));
@@ -221,8 +222,10 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    refreshStats();
-  }, [step, sidebarOpen]); // Refresh stats when sidebar opens or step changes
+    if (studentId || sidebarOpen) {
+      refreshStats();
+    }
+  }, [studentId, sidebarOpen, step]);
 
   const progressStats = useMemo(() => {
     const isEnv = formData.subject === 'ENVIRONNEMENT_GLOBAL';
@@ -240,6 +243,9 @@ const App: React.FC = () => {
   };
 
   const startPedagogy = (subject: string) => {
+    // Anti-doublon strict
+    if (completedSubjects.includes(subject)) return;
+
     if (formData.subject !== subject) {
       setFormData({ ...initialFormData, subject });
     }
@@ -249,6 +255,9 @@ const App: React.FC = () => {
   };
 
   const startEnvAudit = () => {
+    // Anti-doublon strict
+    if (envAuditDone) return;
+
     if (formData.subject !== 'ENVIRONNEMENT_GLOBAL') {
       setFormData({ ...initialFormData, subject: 'ENVIRONNEMENT_GLOBAL' });
     }
@@ -271,18 +280,30 @@ const App: React.FC = () => {
       }
       const id = await saveFeedback(formData, studentId);
       setLastSubmissionId(id);
-      const analysis = await analyzeFeedback(formData);
-      await sendAnalysisToAdmin(formData, analysis);
+
+      // Analyse IA et Envoi Email
+      try {
+        const analysis = await analyzeFeedback(formData);
+        await sendAnalysisToAdmin(formData, analysis);
+      } catch (aiErr) {
+        console.error("AI Analysis/Email error:", aiErr);
+      }
+
       localStorage.removeItem(DRAFT_KEY);
       setFormData(initialFormData);
+
+      // Mise à jour immédiate avant de passer au remerciement
+      await refreshStats();
+
       setStep('thanks');
-    } catch {
+    } catch (err) {
+      console.error("Submission error:", err);
       setStep('thanks');
     }
   };
 
   // --- Calculs pour l'affichage (Barres de progression) ---
-  const totalStepsCount = GI_SUBJECTS.length + 1; // Modules + Environnement
+  const totalStepsCount = 12; // 11 Modules + 1 Environnement
   const currentProgressCount = completedSubjects.length + (envAuditDone ? 1 : 0);
   const globalProgression = Math.round((currentProgressCount / totalStepsCount) * 100);
   const firstUncompleted = GI_SUBJECTS.find(s => !completedSubjects.includes(s));
@@ -291,7 +312,10 @@ const App: React.FC = () => {
     <div className="min-h-screen text-slate-100 pb-20 selection:bg-indigo-500/30">
       {step === 'scanner' && (
         <QRScanner
-          onScan={(d) => { const s = GI_SUBJECTS.find(x => d.includes(x)); if (s) startPedagogy(s); }}
+          onScan={(d) => {
+            const s = GI_SUBJECTS.find(x => d.includes(x));
+            if (s && !completedSubjects.includes(s)) startPedagogy(s);
+          }}
           onClose={() => setStep('hub')}
         />
       )}
@@ -338,7 +362,6 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-8 animate-in slide-in-from-right duration-500">
-              {/* Header Auth */}
               <div className="flex items-center gap-4 bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl">
                 <div className="p-2 bg-emerald-500 rounded-lg">
                   <ShieldCheck className="w-6 h-6 text-white" />
@@ -349,7 +372,6 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* KPI Cards */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
                   <p className="text-3xl font-black text-white">{globalStats.totalFeedbacks}</p>
@@ -361,13 +383,10 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Stats Environnement */}
               <div className="space-y-4">
                 <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
                   <BarChart3 className="w-3 h-3" /> Focus Environnement
                 </h5>
-
-                {/* PC Rate */}
                 <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 relative overflow-hidden">
                   <div className="flex justify-between items-end relative z-10">
                     <div>
@@ -379,7 +398,6 @@ const App: React.FC = () => {
                   <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000" style={{ width: `${envStats.laptop.rate}%` }}></div>
                 </div>
 
-                {/* Transport Distribution */}
                 <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-4">
                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-2">Mobilité Étudiante</p>
                   <div className="space-y-3">
@@ -397,7 +415,6 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Breakdown Subjects */}
               <div className="space-y-4">
                 <h5 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
                   <PieChart className="w-3 h-3" /> Détail Modules
@@ -453,7 +470,6 @@ const App: React.FC = () => {
 
         {step === 'hub' && (
           <div className="space-y-10 animate-in slide-in-from-bottom-6 duration-500">
-            {/* Bannière de Progression Globale */}
             <div className="bg-slate-900/60 border-2 border-slate-800 rounded-[48px] p-8 md:p-10 shadow-2xl relative overflow-hidden">
               <div className="absolute -right-10 -top-10 opacity-10 pointer-events-none">
                 <TrendingUp size={240} className="text-indigo-400" />
@@ -464,7 +480,7 @@ const App: React.FC = () => {
                   <h2 className="text-5xl md:text-7xl font-black text-white italic tracking-tighter uppercase leading-none">
                     {currentProgressCount} <span className="text-slate-700">/ {totalStepsCount}</span>
                   </h2>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{totalStepsCount - currentProgressCount} étapes restantes</p>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{Math.max(0, totalStepsCount - currentProgressCount)} étapes restantes</p>
                 </div>
                 <div className="flex-1 max-w-sm w-full space-y-4">
                   <div className="flex justify-between items-end px-1">
@@ -484,42 +500,64 @@ const App: React.FC = () => {
               <h2 className="text-3xl font-black uppercase italic leading-none flex items-center gap-3">
                 <LayoutDashboard className="w-6 h-6 text-indigo-400" /> Console Étudiant
               </h2>
-              <button onClick={() => setStep('scanner')} className="p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-2xl text-indigo-400 hover:bg-indigo-500 hover:text-white transition-all"><QrCode className="w-6 h-6" /></button>
+              <button
+                onClick={() => setStep('scanner')}
+                className="p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-2xl text-indigo-400 hover:bg-indigo-500 hover:text-white transition-all"
+              >
+                <QrCode className="w-6 h-6" />
+              </button>
             </div>
 
-            {/* Grille des modules académiques */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {GI_SUBJECTS.map((s) => {
                 const status = getSubjectStatus(s);
                 const isDone = status === 'Terminé';
                 const isProgress = status === 'En cours';
                 return (
-                  <button key={s} onClick={() => !isDone && startPedagogy(s)} className={`p-5 rounded-3xl border transition-all text-left group flex flex-col gap-3 h-full ${isDone ? 'bg-emerald-500/5 border-emerald-500/30' :
-                    isProgress ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/20' :
-                      'bg-slate-950/40 border-slate-800 hover:border-slate-600'
-                    }`}>
+                  <button
+                    key={s}
+                    disabled={isDone}
+                    onClick={() => startPedagogy(s)}
+                    className={`p-5 rounded-3xl border transition-all text-left group flex flex-col gap-3 h-full ${isDone ? 'bg-emerald-500/5 border-emerald-500/30 opacity-60 grayscale-[0.5] cursor-not-allowed' :
+                        isProgress ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/20' :
+                          'bg-slate-950/40 border-slate-800 hover:border-slate-600'
+                      }`}
+                  >
                     <div className="flex items-center justify-between">
                       {isDone ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : isProgress ? <Clock className="w-4 h-4 text-indigo-400 animate-pulse" /> : <Circle className="w-4 h-4 text-slate-700" />}
-                      <span className={`text-[8px] font-black uppercase tracking-tighter ${isDone ? 'text-emerald-400' : isProgress ? 'text-indigo-400' : 'text-slate-600'}`}>{status}</span>
+                      <span className={`text-[8px] font-black uppercase tracking-tighter ${isDone ? 'text-emerald-400' : isProgress ? 'text-indigo-400' : 'text-slate-600'}`}>
+                        {status}
+                      </span>
                     </div>
-                    <p className={`text-[10px] font-black uppercase leading-tight line-clamp-2 ${isDone ? 'text-emerald-100' : isProgress ? 'text-indigo-100' : 'text-slate-400 group-hover:text-white'}`}>{s}</p>
+                    <p className={`text-[10px] font-black uppercase leading-tight line-clamp-2 ${isDone ? 'text-emerald-100' : isProgress ? 'text-indigo-100' : 'text-slate-400 group-hover:text-white'}`}>
+                      {s}
+                    </p>
                   </button>
                 );
               })}
             </div>
 
-            {/* Audit Environnemental & Actions Globales */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pb-12">
-              <button onClick={startEnvAudit} className={`p-10 rounded-[40px] border-2 transition-all text-left group flex flex-col justify-between h-64 ${envAuditDone ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-slate-900/40 border-slate-800 hover:border-emerald-500/50'}`}>
+              <button
+                disabled={envAuditDone}
+                onClick={startEnvAudit}
+                className={`p-10 rounded-[40px] border-2 transition-all text-left group flex flex-col justify-between h-64 ${envAuditDone ? 'bg-emerald-500/5 border-emerald-500/30 opacity-60 cursor-not-allowed' : 'bg-slate-900/40 border-slate-800 hover:border-emerald-500/50'
+                  }`}
+              >
                 <Building2 className={`w-12 h-12 transition-transform group-hover:scale-110 ${envAuditDone ? 'text-emerald-400' : 'text-slate-600'}`} />
                 <div>
                   <h3 className="text-2xl font-black uppercase text-white">Environnement</h3>
-                  <p className={`text-[10px] font-black uppercase tracking-[0.3em] mt-2 ${envAuditDone ? 'text-emerald-400' : 'text-slate-500'}`}>{envAuditDone ? 'Audit Clôturé' : 'Audit Infrastructure & Logistique'}</p>
+                  <p className={`text-[10px] font-black uppercase tracking-[0.3em] mt-2 ${envAuditDone ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    {envAuditDone ? 'Audit Clôturé' : 'Audit Infrastructure & Logistique'}
+                  </p>
                 </div>
               </button>
 
               {firstUncompleted && (
-                <button onClick={() => startPedagogy(firstUncompleted)} className="p-10 rounded-[40px] bg-indigo-600 border-2 border-indigo-500 hover:bg-indigo-500 transition-all text-left group flex flex-col justify-between h-64 shadow-2xl">
+                <button
+                  onClick={() => startPedagogy(firstUncompleted)}
+                  className="p-10 rounded-[40px] bg-indigo-600 border-2 border-indigo-500 hover:bg-indigo-500 transition-all text-left group flex flex-col justify-between h-64 shadow-2xl"
+                >
                   <Zap className="text-white w-12 h-12 group-hover:rotate-12 transition-transform" />
                   <div>
                     <h3 className="text-2xl font-black text-white uppercase leading-none">Prochaine Étape</h3>
