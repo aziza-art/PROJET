@@ -318,10 +318,10 @@ const App: React.FC = () => {
       await refreshStats();
 
       setStep('thanks');
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erreur critique soumission:", error);
-      // Même en cas d'erreur critique, on essaie de ne pas bloquer l'utilisateur sur le spinner
-      alert("Une erreur est survenue lors de la sauvegarde. Veuillez réessayer.");
+      const errorMsg = error?.message || (typeof error === 'string' ? error : "Erreur inconnue");
+      alert(`Une erreur est survenue lors de la sauvegarde : ${errorMsg}\nVérifiez votre connexion et les paramètres du serveur.`);
       setStep('hub');
     }
   };
