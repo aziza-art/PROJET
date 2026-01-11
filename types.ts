@@ -35,3 +35,18 @@ export interface SubjectStats {
   totalEntries: number;
   qAverages: Record<string, number>;
 }
+
+export interface GlobalStats {
+  totalFeedbacks: number;
+  uniqueSubjects: number;
+  globalAverageScore: number;
+}
+
+export interface EnvironmentStats {
+  transport: Record<string, number>;
+  laptop: {
+    yes: number;
+    no: number;
+    rate: number;
+  };
+}
