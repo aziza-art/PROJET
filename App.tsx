@@ -202,6 +202,8 @@ const App: React.FC = () => {
 
   const refreshStats = async () => {
     try {
+      if (!studentId && !sidebarOpen) return;
+
       const [gs, es, sb, history] = await Promise.all([
         getGlobalStats(),
         getEnvironmentStats(),
@@ -214,7 +216,14 @@ const App: React.FC = () => {
       setSubjectsBreakdown(sb);
 
       const feedbackHistory = history as any[];
-      setCompletedSubjects(feedbackHistory.filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL').map(e => e.subject));
+      // Utilisation d'un Set pour garantir l'unicité des modules complétés
+      const uniqueCompleted = Array.from(new Set(
+        feedbackHistory
+          .filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL')
+          .map(e => e.subject)
+      ));
+
+      setCompletedSubjects(uniqueCompleted);
       setEnvAuditDone(feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL'));
     } catch (err) {
       console.error("Error refreshing stats:", err);
@@ -281,18 +290,22 @@ const App: React.FC = () => {
       const id = await saveFeedback(formData, studentId);
       setLastSubmissionId(id);
 
-      // Analyse IA et Envoi Email
-      try {
-        const analysis = await analyzeFeedback(formData);
-        await sendAnalysisToAdmin(formData, analysis);
-      } catch (aiErr) {
-        console.error("AI Analysis/Email error:", aiErr);
+      // Mise à jour optimiste de l'UI locale pour un effet instanné
+      if (formData.subject === 'ENVIRONNEMENT_GLOBAL') {
+        setEnvAuditDone(true);
+      } else {
+        setCompletedSubjects(prev => Array.from(new Set([...prev, formData.subject])));
       }
+
+      // Analyse IA et Envoi Email (en arrière-plan pour ne pas bloquer l'UI)
+      analyzeFeedback(formData)
+        .then(analysis => sendAnalysisToAdmin(formData, analysis))
+        .catch(err => console.error("AI/Email background error:", err));
 
       localStorage.removeItem(DRAFT_KEY);
       setFormData(initialFormData);
 
-      // Mise à jour immédiate avant de passer au remerciement
+      // Mise à jour immédiate des stats globales
       await refreshStats();
 
       setStep('thanks');
@@ -303,7 +316,7 @@ const App: React.FC = () => {
   };
 
   // --- Calculs pour l'affichage (Barres de progression) ---
-  const totalStepsCount = 12; // 11 Modules + 1 Environnement
+  const totalStepsCount = GI_SUBJECTS.length + 1; // 11 Modules + 1 Audit = 12
   const currentProgressCount = completedSubjects.length + (envAuditDone ? 1 : 0);
   const globalProgression = Math.round((currentProgressCount / totalStepsCount) * 100);
   const firstUncompleted = GI_SUBJECTS.find(s => !completedSubjects.includes(s));
@@ -519,8 +532,8 @@ const App: React.FC = () => {
                     disabled={isDone}
                     onClick={() => startPedagogy(s)}
                     className={`p-5 rounded-3xl border transition-all text-left group flex flex-col gap-3 h-full ${isDone ? 'bg-emerald-500/5 border-emerald-500/30 opacity-60 grayscale-[0.5] cursor-not-allowed' :
-                        isProgress ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/20' :
-                          'bg-slate-950/40 border-slate-800 hover:border-slate-600'
+                      isProgress ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/20' :
+                        'bg-slate-950/40 border-slate-800 hover:border-slate-600'
                       }`}
                   >
                     <div className="flex items-center justify-between">
