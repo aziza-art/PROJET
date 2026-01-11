@@ -216,6 +216,7 @@ const App: React.FC = () => {
 
   const refreshStats = async () => {
     try {
+      // Priorité à l'ID étudiant pour l'historique personnel
       if (!studentId && !sidebarOpen) return;
 
       const [gs, es, sb, history] = await Promise.all([
@@ -236,8 +237,11 @@ const App: React.FC = () => {
 
       const isEnvDoneServer = feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL');
 
-      // Fusionner avec l'état local actuel pour éviter les régressions visuelles
-      setCompletedSubjects(prev => Array.from(new Set([...prev, ...serverCompleted])));
+      // Fusion intelligente : on garde ce qu'on a en local + ce que le serveur confirme
+      setCompletedSubjects(prev => {
+        const combined = Array.from(new Set([...prev, ...serverCompleted]));
+        return combined;
+      });
       setEnvAuditDone(prev => prev || isEnvDoneServer);
     } catch (err) {
       console.error("Error refreshing stats:", err);
@@ -266,9 +270,7 @@ const App: React.FC = () => {
   };
 
   const startPedagogy = (subject: string) => {
-    // Anti-doublon strict
     if (completedSubjects.includes(subject)) return;
-
     if (formData.subject !== subject) {
       setFormData({ ...initialFormData, subject });
     }
@@ -278,9 +280,7 @@ const App: React.FC = () => {
   };
 
   const startEnvAudit = () => {
-    // Anti-doublon strict
     if (envAuditDone) return;
-
     if (formData.subject !== 'ENVIRONNEMENT_GLOBAL') {
       setFormData({ ...initialFormData, subject: 'ENVIRONNEMENT_GLOBAL' });
     }
@@ -296,22 +296,28 @@ const App: React.FC = () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
+
+    const backupStep = step;
     setStep('submitting');
+
     try {
       if (!studentId) {
-        throw new Error("Student not initialized");
+        throw new Error("Identifiant étudiant introuvable. Veuillez rafraîchir la page.");
       }
-      const id = await saveFeedback(formData, studentId);
-      setLastSubmissionId(id);
 
-      // Mise à jour optimiste de l'UI locale pour un effet instanné
+      // Sauvegarde effective
+      const submissionId = await saveFeedback(formData, studentId);
+      setLastSubmissionId(submissionId);
+
+      // MISE À JOUR DE L'ÉTAT (Confirmée par le serveur)
       if (formData.subject === 'ENVIRONNEMENT_GLOBAL') {
         setEnvAuditDone(true);
       } else {
-        setCompletedSubjects(prev => Array.from(new Set([...prev, formData.subject])));
+        const newCompleted = Array.from(new Set([...completedSubjects, formData.subject]));
+        setCompletedSubjects(newCompleted);
       }
 
-      // Analyse IA et Envoi Email (en arrière-plan pour ne pas bloquer l'UI)
+      // Analyse IA et Email en arrière-plan
       analyzeFeedback(formData)
         .then(analysis => sendAnalysisToAdmin(formData, analysis))
         .catch(err => console.error("AI/Email background error:", err));
@@ -319,13 +325,14 @@ const App: React.FC = () => {
       localStorage.removeItem(DRAFT_KEY);
       setFormData(initialFormData);
 
-      // Mise à jour immédiate des stats globales
+      // Rafraîchir les stats globales pour l'admin
       await refreshStats();
 
       setStep('thanks');
-    } catch (err) {
-      console.error("Submission error:", err);
-      setStep('thanks');
+    } catch (err: any) {
+      console.error("Submission failed:", err);
+      alert(err.message || "Échec de l'envoi. Vérifiez votre connexion internet.");
+      setStep(backupStep);
     }
   };
 
