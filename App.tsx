@@ -250,14 +250,20 @@ const App: React.FC = () => {
   }
 };
 
-const totalStepsCount = GI_SUBJECTS.length + 1; // 12 étapes
+// --- Calculs pour l'affichage (Barres de progression) ---
+const totalStepsCount = GI_SUBJECTS.length + 1; // Modules + Environnement
 const currentProgressCount = completedSubjects.length + (envAuditDone ? 1 : 0);
 const globalProgression = Math.round((currentProgressCount / totalStepsCount) * 100);
 const firstUncompleted = GI_SUBJECTS.find(s => !completedSubjects.includes(s));
 
 return (
   <div className="min-h-screen text-slate-100 pb-20 selection:bg-indigo-500/30">
-    {step === 'scanner' && <QRScanner onScan={(d) => { const s = GI_SUBJECTS.find(x => d.includes(x)); if (s) startPedagogy(s); }} onClose={() => setStep('hub')} />}
+    {step === 'scanner' && (
+      <QRScanner
+        onScan={(d) => { const s = GI_SUBJECTS.find(x => d.includes(x)); if (s) startPedagogy(s); }}
+        onClose={() => setStep('hub')}
+      />
+    )}
 
     {/* Sidebar Admin Simulé */}
     <div className={`fixed inset-y-0 left-0 z-[150] bg-slate-950 border-r border-slate-900 transform transition-all duration-500 shadow-2xl flex flex-col w-80 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
@@ -416,7 +422,7 @@ return (
 
       {step === 'hub' && (
         <div className="space-y-10 animate-in slide-in-from-bottom-6 duration-500">
-          {/* Bannière de Progression Globale (12 étapes) */}
+          {/* Bannière de Progression Globale */}
           <div className="bg-slate-900/60 border-2 border-slate-800 rounded-[48px] p-8 md:p-10 shadow-2xl relative overflow-hidden">
             <div className="absolute -right-10 -top-10 opacity-10 pointer-events-none">
               <TrendingUp size={240} className="text-indigo-400" />
