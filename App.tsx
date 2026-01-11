@@ -216,15 +216,15 @@ const App: React.FC = () => {
       setSubjectsBreakdown(sb);
 
       const feedbackHistory = history as any[];
-      // Utilisation d'un Set pour garantir l'unicité des modules complétés
-      const uniqueCompleted = Array.from(new Set(
-        feedbackHistory
-          .filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL')
-          .map(e => e.subject)
-      ));
+      const serverCompleted = feedbackHistory
+        .filter(e => e.subject !== 'ENVIRONNEMENT_GLOBAL')
+        .map(e => e.subject);
 
-      setCompletedSubjects(uniqueCompleted);
-      setEnvAuditDone(feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL'));
+      const isEnvDone = feedbackHistory.some(e => e.subject === 'ENVIRONNEMENT_GLOBAL');
+
+      // Fusionner avec l'état local actuel pour éviter les régressions visuelles
+      setCompletedSubjects(prev => Array.from(new Set([...prev, ...serverCompleted])));
+      setEnvAuditDone(prev => prev || isEnvDone);
     } catch (err) {
       console.error("Error refreshing stats:", err);
     }
