@@ -226,11 +226,18 @@ const App: React.FC = () => {
 
   const progressStats = useMemo(() => {
     const isEnv = formData.subject === 'ENVIRONNEMENT_GLOBAL';
+    // Vérification stricte des champs pour éviter les erreurs
     const fields = isEnv
       ? [formData.q6_jobs, formData.q7_rooms, formData.q8_resources, formData.q9_transport, formData.q10_laptop]
       : [formData.q1, formData.q2, formData.q3, formData.q4, formData.q5];
-    const completed = fields.filter(v => v !== null).length;
-    return { percentage: Math.round((completed / 5) * 100), completed, total: 5 };
+
+    const completed = fields.filter(v => v !== null && v !== '').length;
+
+    return {
+      percentage: Math.round((completed / 5) * 100),
+      completed: completed,
+      total: 5
+    };
   }, [formData]);
 
   const getSubjectStatus = (name: string) => {
